@@ -1,0 +1,40 @@
+app-id: dev.dayfile.app
+# GNOME runtime, not freedesktop: it ships WebKitGTK, which Tauri needs.
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: dayfile
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/dayfile/cargo-home
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Journal folder is user-chosen and remembered across runs, so a portal-only grant would break on restart.
+  - --filesystem=home
+
+modules:
+  - name: dayfile
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network # cargo needs crates.io
+    build-commands:
+      - cargo build --release --manifest-path src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/dayfile /app/bin/dayfile
+      - install -Dm644 src-tauri/icons/icon.png
+          /app/share/icons/hicolor/512x512/apps/dev.dayfile.app.png
+      - install -Dm644 dev.dayfile.app.desktop
+          /app/share/applications/dev.dayfile.app.desktop
+      - install -Dm644 dev.dayfile.app.metainfo.xml
+          /app/share/metainfo/dev.dayfile.app.metainfo.xml
+    sources:
+      - type: dir
+        path: .

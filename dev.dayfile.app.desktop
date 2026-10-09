@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dayfile
+Comment=A private, file-based daily journal
+Exec=dayfile
+Icon=dev.dayfile.app
+Terminal=false
+Categories=Office;Utility;
+StartupWMClass=dayfile

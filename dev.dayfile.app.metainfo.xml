@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.dayfile.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Dayfile</name>
+  <summary>A private, file-based daily journal</summary>
+  <description>
+    <p>
+      Write one entry per day. Entries are plain Markdown files in a folder you
+      choose, with mood, tags, search, a calendar, streaks and a year-in-review
+      heatmap.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.dayfile.app.desktop</launchable>
+  <categories>
+    <category>Office</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-10-09">
+      <description><p>Initial release.</p></description>
+    </release>
+  </releases>
+</component>

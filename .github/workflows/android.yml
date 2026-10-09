@@ -1,0 +1,130 @@
+name: Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip the cargo tests"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+jobs:
+  test:
+    name: cargo test
+    if: ${{ !inputs.skip_tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # Tests live in the Tauri crate, which needs webkit/gtk to compile.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  apk:
+    name: Build APK (arm64)
+    needs: test
+    if: ${{ !cancelled() && needs.test.result != 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      NDK_VERSION: "30.0.16248370"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Apply VERSION
+        run: python3 scripts/set_version.py
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK + NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools ndk;${{ env.NDK_VERSION }}"
+
+      - name: Point the build at the NDK
+        run: |
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cache Tauri CLI
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-2-${{ runner.os }}
+      - name: Install Tauri CLI
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Generate the Android project
+        run: cargo tauri android init --ci
+
+      - name: Launcher icons
+        run: |
+          RES=src-tauri/gen/android/app/src/main/res
+          if [ -d src-tauri/icons/android ]; then
+            cp -r src-tauri/icons/android/. "$RES/"
+          else
+            cargo tauri icon src-tauri/icons/icon.png --output "$RUNNER_TEMP/icons"
+            cp -r "$RUNNER_TEMP/icons/android/." "$RES/"
+          fi
+
+      - name: Build release APK
+        run: cargo tauri android build --apk --target aarch64
+
+      # Unsigned APKs won't install; with no secrets a throwaway key is used, so updates across keys get refused.
+      - name: Sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          UNSIGNED=$(find src-tauri/gen/android -name '*-unsigned.apk' | head -n1)
+          echo "unsigned: $UNSIGNED"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.jks
+            PASS="$KEYSTORE_PASSWORD"; ALIAS="$KEY_ALIAS"
+          else
+            PASS=android-test-key; ALIAS=test
+            keytool -genkeypair -keystore release.jks -storepass "$PASS" -keypass "$PASS" -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Dayfile test"
+          fi
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
+          "$APKSIGNER" sign --ks release.jks --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias "$ALIAS" \
+            --out dayfile-arm64.apk "$UNSIGNED"
+          "$APKSIGNER" verify dayfile-arm64.apk
+          rm -f release.jks
+
+      - name: Check the native library made it into the APK
+        run: unzip -l dayfile-arm64.apk | grep -E 'lib/arm64-v8a/libdayfile_lib\.so'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dayfile-android
+          path: dayfile-arm64.apk
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dayfile-arm64.apk

@@ -1,0 +1,60 @@
+name: AppImage
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+jobs:
+  build-appimage:
+    name: "Build AppImage"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply VERSION
+        run: python3 scripts/set_version.py
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
+
+      - name: Cache Tauri CLI
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-2-${{ runner.os }}
+      - name: Install Tauri CLI
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
+        run: cargo tauri build --bundles appimage
+
+      - name: Rename AppImage
+        run: |
+          f=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -n1)
+          mv "$f" src-tauri/target/release/bundle/appimage/dayfile.AppImage
+          chmod +x src-tauri/target/release/bundle/appimage/dayfile.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage
+          path: src-tauri/target/release/bundle/appimage/dayfile.AppImage
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: src-tauri/target/release/bundle/appimage/dayfile.AppImage
