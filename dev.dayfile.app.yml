@@ -35,6 +35,7 @@ modules:
           /app/share/applications/dev.dayfile.app.desktop
       - install -Dm644 dev.dayfile.app.metainfo.xml
           /app/share/metainfo/dev.dayfile.app.metainfo.xml
+      - rm -rf src-tauri/target cargo-home
     sources:
       - type: dir
         path: .
