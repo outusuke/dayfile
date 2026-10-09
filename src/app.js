@@ -1,13 +1,12 @@
 (() => {
 'use strict';
 
-// ---------- Tauri bridge ----------
 const T = window.__TAURI__;
 const invoke = (cmd, args) => T.core.invoke(cmd, args);
 const $ = (id) => document.getElementById(id);
 const msgOf = (e) => (typeof e === 'string' ? e : (e && e.message) || String(e));
 
-// ---------- dates (local time, never UTC) ----------
+// local time throughout; toISOString() would shift the day
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -19,22 +18,20 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && ymd(parse(s)) === s;
 const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
 const MOOD_NAMES = ['Awful', 'Bad', 'Okay', 'Good', 'Great'];
 
-// ---------- state ----------
 const S = {
   dir: '',
-  entries: new Map(),          // date -> Entry (from Rust)
+  entries: new Map(),
   date: today(),
   cur: { rev: null, extra: [] },
   mood: null, tags: [], starred: false,
   dirty: false, blocked: false,
   timer: null, chain: Promise.resolve(), loadToken: 0,
-  calMonth: null,              // 'YYYY-MM'
+  calMonth: null,
   year: new Date().getFullYear(), heat: 'words',
   tab: 'write',
   filter: { q: '', tag: '', starred: false },
 };
 
-// ---------- tiny DOM helpers ----------
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -73,7 +70,6 @@ function showNotice(text, buttons) {
 }
 const hideNotice = () => $('notice').classList.add('hidden');
 
-// ---------- banner / folder ----------
 function renderBanner(error) {
   const b = $('banner');
   b.className = 'setup-banner' + (error ? ' error' : '');
@@ -105,7 +101,6 @@ async function changeFolder() {
   }
 }
 
-// ---------- loading ----------
 async function fetchEntries() {
   const list = await invoke('list_entries');
   S.entries = new Map(list.map((e) => [e.date, e]));
@@ -143,7 +138,7 @@ async function loadDay(date, skipFlush) {
   let entry = null;
   try { entry = await invoke('read_entry', { date }); }
   catch (e) { setIndicator('Error: ' + msgOf(e), 'error'); }
-  if (token !== S.loadToken) return;        // a newer navigation won
+  if (token !== S.loadToken) return;
   S.date = date;
   S.calMonth = date.slice(0, 7);
   if (entry) S.entries.set(date, entry); else S.entries.delete(date);
@@ -155,7 +150,6 @@ async function loadDay(date, skipFlush) {
   renderCalendar();
 }
 
-// ---------- saving ----------
 function snapshot() {
   return {
     body: $('entryText').value,
@@ -191,7 +185,7 @@ async function doSave(force) {
     const res = await invoke('write_entry', {
       date, body: snap.body, meta: snap.meta, expectedRev: S.cur.rev, force,
     });
-    if (date !== S.date) return true;       // user navigated away mid-save; list refresh covers it
+    if (date !== S.date) return true;
     if (res) { S.entries.set(date, res); S.cur = { rev: res.rev, extra: res.extra }; }
     else { S.entries.delete(date); S.cur = { rev: null, extra: [] }; }
     S.blocked = false; hideNotice();
@@ -243,7 +237,6 @@ async function deleteEntry() {
   } catch (e) { toast('Error: ' + msgOf(e)); }
 }
 
-// ---------- editor bits ----------
 function updateWordCount() {
   const w = $('entryText').value.trim().split(/\s+/).filter(Boolean).length;
   $('wordCount').textContent = w ? `${w} word${w === 1 ? '' : 's'}` : '';
@@ -260,11 +253,11 @@ function renderMeta() {
   s.setAttribute('aria-pressed', String(S.starred));
 }
 
-// ---------- stats ----------
 function streaks() {
   const has = new Set(S.entries.keys());
   let cur = 0;
-  let d = has.has(today()) ? today() : addDays(today(), -1);   // today may simply not be written yet
+  // today may not be written yet
+  let d = has.has(today()) ? today() : addDays(today(), -1);
   while (has.has(d)) { cur++; d = addDays(d, -1); }
   let longest = 0, run = 0, prev = null;
   for (const date of [...has].sort()) {
@@ -283,7 +276,6 @@ function renderStats() {
   $('statWords').textContent = words.toLocaleString('en-US');
 }
 
-// ---------- calendar ----------
 function renderCalendar() {
   const [y, m] = (S.calMonth || S.date.slice(0, 7)).split('-').map(Number);
   const root = $('calendar');
@@ -295,7 +287,7 @@ function renderCalendar() {
   head.append(prev, el('div', 'cal-title', new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })), next);
   const grid = el('div', 'cal-grid');
   ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((d) => grid.append(el('div', 'cal-dow', d)));
-  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;     // Monday first (ISO 8601)
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
   for (let i = 0; i < lead; i++) grid.append(el('div', 'cal-blank'));
   const days = new Date(y, m, 0).getDate();
   const t = today();
@@ -311,7 +303,6 @@ function renderCalendar() {
   root.append(head, grid);
 }
 
-// ---------- browse ----------
 function highlight(text, q) {
   const frag = document.createDocumentFragment();
   const lower = text.toLowerCase(), needle = q.toLowerCase();
@@ -341,7 +332,6 @@ function matches(e) {
   return e.body.toLowerCase().includes(q) || e.date.includes(q) || e.tags.some((t) => t.toLowerCase().includes(q));
 }
 function renderBrowse() {
-  // tag filter options
   const tags = [...new Set([...S.entries.values()].flatMap((e) => e.tags))].sort((a, b) => a.localeCompare(b));
   const sel = $('tagFilter');
   sel.replaceChildren(new Option('All tags', ''));
@@ -390,7 +380,6 @@ async function exportAll(format) {
   } catch (e) { toast('Export failed: ' + msgOf(e)); }
 }
 
-// ---------- year heatmap ----------
 function renderYear() {
   const y = S.year;
   $('yearTitle').textContent = y;
@@ -399,9 +388,9 @@ function renderYear() {
   const root = $('heatmap');
   root.replaceChildren();
   const jan1 = new Date(y, 0, 1), dec31 = new Date(y, 11, 31);
-  const cursor = new Date(y, 0, 1 - ((jan1.getDay() + 6) % 7));   // back up to Monday
+  const cursor = new Date(y, 0, 1 - ((jan1.getDay() + 6) % 7));
   const t = today();
-  let count = 0;
+  let count = 0, todayWeek = null;
   while (cursor <= dec31) {
     const week = el('div', 'heat-week');
     const label = el('div', 'heat-label');
@@ -412,9 +401,8 @@ function renderYear() {
       if (cursor.getFullYear() !== y) {
         cell.classList.add('off');
       } else {
-        if (cursor.getDate() <= 7 && !label.textContent && i === 0 || (cursor.getDate() === 1 && !label.textContent)) {
-          label.textContent = cursor.toLocaleDateString('en-US', { month: 'short' });
-        }
+        if (cursor.getDate() === 1) label.textContent = cursor.toLocaleDateString('en-US', { month: 'short' });
+        if (date === t) todayWeek = week;
         const e = S.entries.get(date);
         if (e) {
           count++;
@@ -433,7 +421,8 @@ function renderYear() {
     }
     root.append(week);
   }
-  // legend
+  const wrap = root.parentElement;
+  wrap.scrollLeft = todayWeek ? Math.max(0, todayWeek.offsetLeft - wrap.clientWidth / 2) : 0;
   const lg = $('heatLegend');
   lg.replaceChildren();
   const cls = S.heat === 'mood' ? ['m1', 'm2', 'm3', 'm4', 'm5'] : ['', 'l1', 'l2', 'l3', 'l4'];
@@ -444,7 +433,6 @@ function renderYear() {
   $('heatSummary').textContent = `${count} entr${count === 1 ? 'y' : 'ies'} in ${y} · ${Math.round((count / days) * 100)}% of days`;
 }
 
-// ---------- tabs ----------
 function renderActive() {
   if (S.tab === 'browse') renderBrowse();
   else if (S.tab === 'year') renderYear();
@@ -452,12 +440,13 @@ function renderActive() {
 async function switchTab(tab) {
   if (tab !== 'write') await flush();
   S.tab = tab;
+  document.body.dataset.tab = tab;
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   for (const t of ['write', 'browse', 'year']) $('tab-' + t).classList.toggle('hidden', t !== tab);
   renderActive();
 }
 
-// ---------- pick up outside changes (sync clients, other editors) ----------
+// sync clients and other editors may have touched files while we were in the background
 async function onFocus() {
   if (S.dir === '') return;
   try {
@@ -467,10 +456,9 @@ async function onFocus() {
       const disk = S.entries.get(S.date);
       if ((disk ? disk.rev : null) !== S.cur.rev) { await loadDay(S.date, true); toast('Updated from disk'); }
     }
-  } catch (_) { /* folder temporarily unavailable; keep what we have */ }
+  } catch (_) {}
 }
 
-// ---------- wiring ----------
 function wire() {
   MOODS.forEach((emoji, i) => {
     const b = el('button', 'mood-btn', emoji);
