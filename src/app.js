@@ -580,17 +580,32 @@ function renderBackup() {
   p.classList.remove('hidden');
 }
 
+function toBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
 async function restoreBackup() {
+  let step = 'choosing the file';
   try {
     const picked = await T.dialog.open({ multiple: false, filters: [{ name: 'Zip archive', extensions: ['zip'] }] });
     if (!picked) return;
-    const r = await invoke('restore_backup', await T.fs.readFile(picked));
+    step = 'reading the file';
+    const data = toBase64(await T.fs.readFile(picked));
+    step = 'restoring';
+    const r = await invoke('restore_backup', { data });
     hideNotice();
     await refreshAll(true);
-    const n = r.restored;
-    toast(`Restored ${n} entr${n === 1 ? 'y' : 'ies'}` + (r.skipped ? `, ${r.skipped} already existed` : ''), 4000);
     scheduleBackup(2000);
-  } catch (e) { toast('Restore failed: ' + msgOf(e), 4000); }
+    const summary = `Restored ${r.restored} of ${r.total} entries`
+      + (r.skipped ? `, ${r.skipped} already existed` : '')
+      + (r.hashed ? ', all checked against their checksums' : ' (this backup has no checksums)');
+    if (r.problems.length) {
+      showNotice(`${summary}. ${r.problems.length} problem${r.problems.length === 1 ? '' : 's'}: ${r.problems.slice(0, 3).join('; ')}`,
+        [{ label: 'Dismiss', onClick: hideNotice }]);
+    } else toast(summary, 5000);
+  } catch (e) { toast(`Restore failed while ${step}: ${msgOf(e)}`, 6000); }
 }
 
 async function init() {

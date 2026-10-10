@@ -20,6 +20,7 @@ pub trait Sink {
 struct Log {
     last: u64,
     error: Option<String>,
+    hash: String,
     files: Vec<File>,
 }
 
@@ -78,6 +79,10 @@ pub fn run(dir: &Path, log_path: &Path, day: &str, sink: &mut dyn Sink) -> Resul
 
 fn snapshot(dir: &Path, log: &mut Log, day: &str, sink: &mut dyn Sink) -> Result<bool, String> {
     let Some(bytes) = store::backup_bytes(dir)? else { return Ok(false) };
+    let hash = store::sha256_hex(&bytes);
+    if log.hash == hash && log.files.iter().any(|f| f.day == day) {
+        return Ok(true);
+    }
     let reused = match log.files.iter().find(|f| f.day == day) {
         Some(f) => sink.overwrite(&f.uri, &bytes).is_ok(),
         None => false,
@@ -87,6 +92,7 @@ fn snapshot(dir: &Path, log: &mut Log, day: &str, sink: &mut dyn Sink) -> Result
         log.files.retain(|f| f.day != day);
         log.files.push(File { day: day.to_string(), uri });
     }
+    log.hash = hash;
     while log.files.len() > KEEP_DAYS {
         let old = log.files.remove(0);
         sink.remove(&old.uri);
@@ -127,12 +133,14 @@ mod tests {
     struct Fake {
         files: BTreeMap<String, Vec<u8>>,
         next: u32,
+        writes: u32,
         fail_overwrite: bool,
     }
 
     impl Sink for Fake {
         fn create(&mut self, name: &str, bytes: &[u8]) -> Result<String, String> {
             self.next += 1;
+            self.writes += 1;
             let uri = format!("content://fake/{}/{name}", self.next);
             self.files.insert(uri.clone(), bytes.to_vec());
             Ok(uri)
@@ -141,6 +149,7 @@ mod tests {
             if self.fail_overwrite {
                 return Err("gone".into());
             }
+            self.writes += 1;
             self.files.insert(uri.to_string(), bytes.to_vec());
             Ok(())
         }
@@ -188,6 +197,7 @@ mod tests {
         let mut sink = Fake::default();
         run(&dir, &log, "2026-01-01", &mut sink).unwrap();
         sink.fail_overwrite = true;
+        fs::write(dir.join("2026-01-01.txt"), "edited").unwrap();
         run(&dir, &log, "2026-01-01", &mut sink).unwrap();
         assert_eq!(load(&log).files.len(), 1);
         assert_eq!(sink.next, 2);
@@ -208,5 +218,17 @@ mod tests {
         let mut sink = Fake::default();
         run(&dir, &log, "2026-01-01", &mut sink).unwrap();
         assert!(sink.files.is_empty());
+    }
+
+    #[test]
+    fn unchanged_content_is_not_written_again() {
+        let (dir, log) = setup("same");
+        let mut sink = Fake::default();
+        run(&dir, &log, "2026-01-01", &mut sink).unwrap();
+        run(&dir, &log, "2026-01-01", &mut sink).unwrap();
+        assert_eq!(sink.writes, 1);
+        fs::write(dir.join("2026-01-01.txt"), "changed").unwrap();
+        run(&dir, &log, "2026-01-01", &mut sink).unwrap();
+        assert_eq!(sink.writes, 2);
     }
 }

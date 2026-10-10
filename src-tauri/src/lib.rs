@@ -3,6 +3,7 @@ mod android;
 mod backup;
 mod store;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
@@ -141,11 +142,9 @@ async fn backup_now(state: State<'_, AppState>, day: String) -> Result<backup::S
 }
 
 #[tauri::command]
-async fn restore_backup(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> Result<store::Restored, String> {
-    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
-        return Err("expected the zip as raw bytes".into());
-    };
-    store::restore(&state.dir(), data)
+async fn restore_backup(state: State<'_, AppState>, data: String) -> Result<store::Restored, String> {
+    let bytes = BASE64.decode(data.trim()).map_err(|_| "the file couldn't be read as a zip".to_string())?;
+    store::restore(&state.dir(), &bytes)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1,8 +1,9 @@
 //! One plain-text file per day (YYYY-MM-DD.txt, older .md files still work) with optional front matter for mood, tags and star.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Read, Seek, Write};
@@ -275,9 +276,14 @@ pub fn delete(dir: &Path, date: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn write_zip<W: Write + Seek>(out: W, entries: &[Entry], format: &str) -> Result<(), String> {
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn write_zip<W: Write + Seek>(out: W, entries: &[Entry], format: &str, manifest: bool) -> Result<(), String> {
     let mut zip = zip::ZipWriter::new(out);
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mut listed = Vec::new();
     for e in entries {
         let text = match format {
             "json" => serde_json::to_string_pretty(e).map_err(|err| err.to_string())?,
@@ -287,8 +293,16 @@ fn write_zip<W: Write + Seek>(out: W, entries: &[Entry], format: &str) -> Result
                 &e.body,
             ),
         };
-        zip.start_file(format!("{}.{format}", e.date), opts).map_err(|e| format!("couldn't write the export: {e}"))?;
+        let name = format!("{}.{format}", e.date);
+        zip.start_file(name.clone(), opts).map_err(|e| format!("couldn't write the export: {e}"))?;
         zip.write_all(text.as_bytes()).map_err(|e| format!("couldn't write the export: {e}"))?;
+        listed.push(serde_json::json!({ "file": name, "sha256": sha256_hex(text.as_bytes()), "bytes": text.len() }));
+    }
+    if manifest {
+        let body = serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "entries": listed }))
+            .map_err(|e| e.to_string())?;
+        zip.start_file("manifest.json", opts).map_err(|e| format!("couldn't write the export: {e}"))?;
+        zip.write_all(body.as_bytes()).map_err(|e| format!("couldn't write the export: {e}"))?;
     }
     zip.finish().map_err(|e| format!("couldn't write the export: {e}"))?;
     Ok(())
@@ -300,7 +314,7 @@ pub fn export(dir: &Path, path: &Path, format: &str) -> Result<usize, String> {
     }
     let entries = list(dir)?;
     let file = fs::File::create(path).map_err(|e| format!("couldn't write the export: {e}"))?;
-    write_zip(file, &entries, format)?;
+    write_zip(file, &entries, format, false)?;
     Ok(entries.len())
 }
 
@@ -310,24 +324,53 @@ pub fn backup_bytes(dir: &Path) -> Result<Option<Vec<u8>>, String> {
         return Ok(None);
     }
     let mut buf = Cursor::new(Vec::new());
-    write_zip(&mut buf, &entries, "txt")?;
+    write_zip(&mut buf, &entries, "txt", true)?;
     Ok(Some(buf.into_inner()))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct Restored {
+    pub total: usize,
     pub restored: usize,
     pub skipped: usize,
+    pub hashed: bool,
+    pub problems: Vec<String>,
 }
 
 const MAX_RESTORE_ENTRY: u64 = 16 * 1024 * 1024;
 
-/// Only .txt/.md files named by date are read, and a day that already has an entry is never overwritten.
+fn manifest_hashes(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(mut file) = archive.by_name("manifest.json") else { return out };
+    let mut text = String::new();
+    if file.read_to_string(&mut text).is_err() {
+        return out;
+    }
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else { return out };
+    for item in doc["entries"].as_array().into_iter().flatten() {
+        if let (Some(f), Some(h)) = (item["file"].as_str(), item["sha256"].as_str()) {
+            out.insert(f.to_string(), h.to_string());
+        }
+    }
+    out
+}
+
+/// Every entry is checked against the backup's checksums, written, then read back and compared; a day that already has an entry is never overwritten.
 pub fn restore(dir: &Path, data: &[u8]) -> Result<Restored, String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(|_| "that isn't a zip file".to_string())?;
-    let (mut restored, mut skipped) = (0, 0);
+    let mut archive = zip::ZipArchive::new(Cursor::new(data))
+        .map_err(|_| "couldn't open that zip: it's damaged or not a zip file".to_string())?;
+    let expected = manifest_hashes(&mut archive);
+    let mut report = Restored { hashed: !expected.is_empty(), ..Default::default() };
+    let mut seen = BTreeSet::new();
+
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| format!("couldn't read the zip: {e}"))?;
+        let mut file = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(e) => {
+                report.problems.push(format!("item {} in the zip is unreadable: {e}", i + 1));
+                continue;
+            }
+        };
         if !file.is_file() {
             continue;
         }
@@ -336,27 +379,46 @@ pub fn restore(dir: &Path, data: &[u8]) -> Result<Restored, String> {
         if !valid_date(stem) || !(ext == "txt" || ext == "md") {
             continue;
         }
-        if find(dir, stem).is_some() {
-            skipped += 1;
+        report.total += 1;
+        seen.insert(name.clone());
+
+        let mut raw = Vec::new();
+        if let Err(e) = (&mut file).take(MAX_RESTORE_ENTRY).read_to_end(&mut raw) {
+            report.problems.push(format!("{stem}: couldn't be read from the zip ({e})"));
             continue;
         }
-        let mut raw = Vec::new();
-        (&mut file)
-            .take(MAX_RESTORE_ENTRY)
-            .read_to_end(&mut raw)
-            .map_err(|e| format!("couldn't read {stem} from the zip: {e}"))?;
+        let sum = sha256_hex(&raw);
+        if expected.get(&name).is_some_and(|want| *want != sum) {
+            report.problems.push(format!("{stem}: damaged inside the zip, not restored"));
+            continue;
+        }
+        if find(dir, stem).is_some() {
+            report.skipped += 1;
+            continue;
+        }
+        let target = dir.join(&name);
         let tmp = dir.join(format!(".{stem}.tmp"));
-        fs::write(&tmp, &raw).map_err(|e| format!("couldn't restore {stem}: {e}"))?;
-        fs::rename(&tmp, dir.join(format!("{stem}.{ext}"))).map_err(|e| {
+        let written = fs::write(&tmp, &raw).and_then(|_| fs::rename(&tmp, &target));
+        if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
-            format!("couldn't restore {stem}: {e}")
-        })?;
-        restored += 1;
+            report.problems.push(format!("{stem}: couldn't be saved ({e})"));
+            continue;
+        }
+        if fs::read(&target).map(|back| sha256_hex(&back)).ok().as_deref() != Some(sum.as_str()) {
+            let _ = fs::remove_file(&target);
+            report.problems.push(format!("{stem}: didn't match after saving, removed"));
+            continue;
+        }
+        report.restored += 1;
     }
-    if restored == 0 && skipped == 0 {
+
+    for name in expected.keys().filter(|n| !seen.contains(*n)) {
+        report.problems.push(format!("{name}: listed in the backup but missing from the zip"));
+    }
+    if report.total == 0 && report.problems.is_empty() {
         return Err("no journal entries found in that zip".into());
     }
-    Ok(Restored { restored, skipped })
+    Ok(report)
 }
 
 fn entry_markdown(e: &Entry) -> String {
@@ -592,5 +654,61 @@ mod tests {
     #[test]
     fn empty_journal_has_nothing_to_back_up() {
         assert!(backup_bytes(&scratch("empty")).unwrap().is_none());
+    }
+
+    fn make_zip(files: &[(&str, &str)]) -> Vec<u8> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            for (name, body) in files {
+                z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                z.write_all(body.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    fn manifest(items: &[(&str, &str)]) -> String {
+        let list: Vec<_> = items.iter().map(|(f, h)| serde_json::json!({ "file": f, "sha256": h })).collect();
+        serde_json::json!({ "version": 1, "entries": list }).to_string()
+    }
+
+    #[test]
+    fn restore_checks_every_entry_against_the_checksums() {
+        let src = scratch("hv-src");
+        let dst = scratch("hv-dst");
+        for d in 1..=5 {
+            fs::write(src.join(format!("2026-02-0{d}.txt")), format!("day {d}")).unwrap();
+        }
+        let r = restore(&dst, &backup_bytes(&src).unwrap().unwrap()).unwrap();
+        assert!(r.hashed && r.problems.is_empty());
+        assert_eq!((r.total, r.restored, r.skipped), (5, 5, 0));
+    }
+
+    #[test]
+    fn a_damaged_entry_is_reported_and_not_written() {
+        let dst = scratch("dm-dst");
+        let m = manifest(&[("2026-01-01.txt", &sha256_hex(b"good")), ("2026-01-02.txt", &sha256_hex(b"original"))]);
+        let zip = make_zip(&[("2026-01-01.txt", "good"), ("2026-01-02.txt", "changed"), ("manifest.json", &m)]);
+        let r = restore(&dst, &zip).unwrap();
+        assert_eq!((r.total, r.restored, r.problems.len()), (2, 1, 1));
+        assert!(r.problems[0].contains("2026-01-02"));
+        assert_eq!(entry_files(&dst), ["2026-01-01.txt"]);
+    }
+
+    #[test]
+    fn an_entry_missing_from_the_zip_is_reported() {
+        let dst = scratch("ms-dst");
+        let m = manifest(&[("2026-01-01.txt", &sha256_hex(b"a")), ("2026-01-02.txt", &sha256_hex(b"b"))]);
+        let r = restore(&dst, &make_zip(&[("2026-01-01.txt", "a"), ("manifest.json", &m)])).unwrap();
+        assert_eq!((r.restored, r.problems.len()), (1, 1));
+        assert!(r.problems[0].contains("2026-01-02"));
+    }
+
+    #[test]
+    fn a_zip_without_checksums_still_restores() {
+        let r = restore(&scratch("nh-dst"), &make_zip(&[("2026-01-01.md", "x")])).unwrap();
+        assert!(!r.hashed && r.problems.is_empty() && r.restored == 1);
     }
 }
