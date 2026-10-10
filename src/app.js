@@ -79,11 +79,19 @@ function renderBanner(error) {
   b.append(el('h3', null, 'Folder problem'), el('p', null, error), btn);
 }
 
+const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 async function changeFolder() {
   await flush();
+  let picked;
   try {
-    const picked = await T.dialog.open({ directory: true, multiple: false, defaultPath: S.dir || undefined });
-    if (!picked) return;
+    picked = await T.dialog.open({ directory: true, multiple: false, defaultPath: S.dir || undefined });
+  } catch (e) {
+    toast(isMobile() ? "This device keeps entries in the app's own folder" : 'Folder picker failed: ' + msgOf(e));
+    return;
+  }
+  if (!picked) return;
+  try {
     S.dir = await invoke('set_journal_dir', { path: picked });
     S.blocked = false; hideNotice();
     await refreshAll(true);
@@ -538,6 +546,10 @@ function savedTheme() {
 async function init() {
   wire();
   applyTheme(savedTheme());
+  if (isMobile()) {
+    $('changeFolder').classList.add('hidden');
+    $('folderNote').classList.remove('hidden');
+  }
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);
 }
