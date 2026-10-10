@@ -19,6 +19,7 @@ const MOOD_NAMES = ['Rough', 'Low', 'Okay', 'Good', 'Great'];
 const S = {
   canPick: true,
   canBackup: false, backup: null, backupTimer: null,
+  locked: false, unlockedDate: null,
   dir: '',
   entries: new Map(),
   date: today(),
@@ -135,6 +136,24 @@ function fillEditor(entry) {
   renderMeta();
   updateWordCount();
   setIndicator('');
+  applyLock();
+}
+
+// entries older than yesterday open read-only; empty past days stay open for backfilling
+function applyLock() {
+  S.locked = S.entries.has(S.date) && S.date < addDays(today(), -1) && S.unlockedDate !== S.date;
+  $('entryText').readOnly = S.locked;
+  $('tagsInput').disabled = S.locked;
+  $('starBtn').disabled = S.locked;
+  $('deleteBtn').disabled = S.locked;
+  $('moods').querySelectorAll('button').forEach((b) => { b.disabled = S.locked; });
+  $('unlockBtn').classList.toggle('hidden', !S.locked);
+}
+
+function unlockDay() {
+  S.unlockedDate = S.date;
+  applyLock();
+  $('entryText').focus();
 }
 
 async function loadDay(date, skipFlush) {
@@ -144,6 +163,7 @@ async function loadDay(date, skipFlush) {
   try { entry = await invoke('read_entry', { date }); }
   catch (e) { setIndicator('Error: ' + msgOf(e), 'error'); }
   if (token !== S.loadToken) return;
+  if (date !== S.date) S.unlockedDate = null;
   S.date = date;
   S.calMonth = date.slice(0, 7);
   if (entry) S.entries.set(date, entry); else S.entries.delete(date);
@@ -173,6 +193,7 @@ function setIndicator(text, cls) {
 }
 function markDirty() {
   S.dirty = true;
+  S.unlockedDate = S.date;
   if (S.blocked) return;
   setIndicator('Saving…', 'saving');
   clearTimeout(S.timer);
@@ -524,6 +545,8 @@ function wire() {
   $('exportMd').onclick = () => exportAll('md');
   $('exportJson').onclick = () => exportAll('json');
   $('restoreBtn').onclick = restoreBackup;
+  $('unlockBtn').onclick = unlockDay;
+  $('entryText').addEventListener('click', () => { if (S.locked) toast('This day is locked. Use “Edit this entry” to change it.'); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && S.backupTimer) runBackup(); });
 
   $('prevYear').onclick = () => { S.year--; renderYear(); };
