@@ -134,6 +134,15 @@
               <button class="btn btn-secondary" id="exportJson">JSON</button>
             </div>
           </div>
+          <div class="set-group">
+            <div class="set-label">Backup</div>
+            <p class="set-note hidden" id="backupNote">Dayfile saves a zip of every entry to Documents/Dayfile while the app is open and keeps the last 7 days. Uninstalling the app doesn't delete them.</p>
+            <p class="set-note hidden" id="backupStatus"></p>
+            <div class="set-row">
+              <button class="btn btn-secondary" id="restoreBtn">Restore from backup…</button>
+            </div>
+            <p class="set-note">Adds entries from a zip made by Dayfile. Days that already have an entry are left alone.</p>
+          </div>
         </section>
       </div>
     </div>

@@ -5,7 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -275,15 +275,10 @@ pub fn delete(dir: &Path, date: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn export(dir: &Path, path: &Path, format: &str) -> Result<usize, String> {
-    if !matches!(format, "txt" | "md" | "json") {
-        return Err(format!("unknown export format: {format}"));
-    }
-    let entries = list(dir)?;
-    let file = fs::File::create(path).map_err(|e| format!("couldn't write the export: {e}"))?;
-    let mut zip = zip::ZipWriter::new(file);
+fn write_zip<W: Write + Seek>(out: W, entries: &[Entry], format: &str) -> Result<(), String> {
+    let mut zip = zip::ZipWriter::new(out);
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    for e in &entries {
+    for e in entries {
         let text = match format {
             "json" => serde_json::to_string_pretty(e).map_err(|err| err.to_string())?,
             "md" => entry_markdown(e),
@@ -296,7 +291,72 @@ pub fn export(dir: &Path, path: &Path, format: &str) -> Result<usize, String> {
         zip.write_all(text.as_bytes()).map_err(|e| format!("couldn't write the export: {e}"))?;
     }
     zip.finish().map_err(|e| format!("couldn't write the export: {e}"))?;
+    Ok(())
+}
+
+pub fn export(dir: &Path, path: &Path, format: &str) -> Result<usize, String> {
+    if !matches!(format, "txt" | "md" | "json") {
+        return Err(format!("unknown export format: {format}"));
+    }
+    let entries = list(dir)?;
+    let file = fs::File::create(path).map_err(|e| format!("couldn't write the export: {e}"))?;
+    write_zip(file, &entries, format)?;
     Ok(entries.len())
+}
+
+pub fn backup_bytes(dir: &Path) -> Result<Option<Vec<u8>>, String> {
+    let entries = list(dir)?;
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let mut buf = Cursor::new(Vec::new());
+    write_zip(&mut buf, &entries, "txt")?;
+    Ok(Some(buf.into_inner()))
+}
+
+#[derive(Debug, Serialize)]
+pub struct Restored {
+    pub restored: usize,
+    pub skipped: usize,
+}
+
+const MAX_RESTORE_ENTRY: u64 = 16 * 1024 * 1024;
+
+/// Only .txt/.md files named by date are read, and a day that already has an entry is never overwritten.
+pub fn restore(dir: &Path, data: &[u8]) -> Result<Restored, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(|_| "that isn't a zip file".to_string())?;
+    let (mut restored, mut skipped) = (0, 0);
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| format!("couldn't read the zip: {e}"))?;
+        if !file.is_file() {
+            continue;
+        }
+        let name = file.name().rsplit('/').next().unwrap_or_default().to_string();
+        let Some((stem, ext)) = name.rsplit_once('.') else { continue };
+        if !valid_date(stem) || !(ext == "txt" || ext == "md") {
+            continue;
+        }
+        if find(dir, stem).is_some() {
+            skipped += 1;
+            continue;
+        }
+        let mut raw = Vec::new();
+        (&mut file)
+            .take(MAX_RESTORE_ENTRY)
+            .read_to_end(&mut raw)
+            .map_err(|e| format!("couldn't read {stem} from the zip: {e}"))?;
+        let tmp = dir.join(format!(".{stem}.tmp"));
+        fs::write(&tmp, &raw).map_err(|e| format!("couldn't restore {stem}: {e}"))?;
+        fs::rename(&tmp, dir.join(format!("{stem}.{ext}"))).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("couldn't restore {stem}: {e}")
+        })?;
+        restored += 1;
+    }
+    if restored == 0 && skipped == 0 {
+        return Err("no journal entries found in that zip".into());
+    }
+    Ok(Restored { restored, skipped })
 }
 
 fn entry_markdown(e: &Entry) -> String {
@@ -469,5 +529,68 @@ mod tests {
         let listed = list(&dir).unwrap();
         assert_eq!(listed.iter().find(|e| e.date == "2026-10-07").unwrap().body, "from txt");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn entry_files(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn backup_restores_into_an_empty_journal() {
+        let src = scratch("bk-src");
+        let dst = scratch("bk-dst");
+        fs::write(src.join("2026-01-01.txt"), "---\nmood: 4\ntags: a\n---\nhello").unwrap();
+        fs::write(src.join("2026-01-02.md"), "old md").unwrap();
+        let zip = backup_bytes(&src).unwrap().unwrap();
+
+        let r = restore(&dst, &zip).unwrap();
+        assert_eq!((r.restored, r.skipped), (2, 0));
+        assert_eq!(entry_files(&dst), ["2026-01-01.txt", "2026-01-02.txt"]);
+        let e = read(&dst, "2026-01-01").unwrap().unwrap();
+        assert_eq!((e.mood, e.tags, e.body.as_str()), (Some(4), vec!["a".to_string()], "hello"));
+    }
+
+    #[test]
+    fn restore_keeps_existing_entries() {
+        let src = scratch("rk-src");
+        let dst = scratch("rk-dst");
+        fs::write(src.join("2026-01-01.txt"), "from backup").unwrap();
+        fs::write(src.join("2026-01-02.txt"), "second").unwrap();
+        fs::write(dst.join("2026-01-01.txt"), "newer on disk").unwrap();
+        let zip = backup_bytes(&src).unwrap().unwrap();
+
+        let r = restore(&dst, &zip).unwrap();
+        assert_eq!((r.restored, r.skipped), (1, 1));
+        assert_eq!(fs::read_to_string(dst.join("2026-01-01.txt")).unwrap(), "newer on disk");
+    }
+
+    #[test]
+    fn restore_ignores_paths_and_other_files() {
+        let dst = scratch("rp-dst");
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let o = zip::write::SimpleFileOptions::default();
+            for name in ["../2026-01-01.txt", "notes.txt", "2026-01-03.json", "dayfile/2026-01-04.txt"] {
+                z.start_file(name, o).unwrap();
+                z.write_all(b"x").unwrap();
+            }
+            z.finish().unwrap();
+        }
+        let r = restore(&dst, &buf.into_inner()).unwrap();
+        assert_eq!(r.restored, 2);
+        assert_eq!(entry_files(&dst), ["2026-01-01.txt", "2026-01-04.txt"]);
+        assert!(restore(&dst, b"not a zip").is_err());
+    }
+
+    #[test]
+    fn empty_journal_has_nothing_to_back_up() {
+        assert!(backup_bytes(&scratch("empty")).unwrap().is_none());
     }
 }

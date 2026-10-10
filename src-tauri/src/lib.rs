@@ -1,3 +1,6 @@
+#[cfg(target_os = "android")]
+mod android;
+mod backup;
 mod store;
 
 use std::fs;
@@ -9,6 +12,7 @@ use tauri::{Manager, State};
 struct AppState {
     dir: Mutex<PathBuf>,
     config: PathBuf,
+    backup_log: PathBuf,
 }
 
 impl AppState {
@@ -121,14 +125,39 @@ async fn export_all(state: State<'_, AppState>, path: String, format: String) ->
     store::export(&state.dir(), &PathBuf::from(path), &format)
 }
 
+#[tauri::command]
+fn can_backup() -> bool {
+    backup::SUPPORTED
+}
+
+#[tauri::command]
+async fn backup_status(state: State<'_, AppState>) -> Result<backup::Status, String> {
+    Ok(backup::status(&state.backup_log))
+}
+
+#[tauri::command]
+async fn backup_now(state: State<'_, AppState>, day: String) -> Result<backup::Status, String> {
+    backup::run(&state.dir(), &state.backup_log, &day, &mut backup::platform_sink())
+}
+
+#[tauri::command]
+async fn restore_backup(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> Result<store::Restored, String> {
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("expected the zip as raw bytes".into());
+    };
+    store::restore(&state.dir(), data)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             fs::create_dir_all(&config_dir)?;
             let config = config_dir.join("config.json");
+            let backup_log = config_dir.join("backups.json");
 
             let saved = store::load_dir(&config);
             let dir = match &saved {
@@ -141,7 +170,7 @@ pub fn run() {
                     eprintln!("[dayfile] couldn't create {}: {err}", dir.display());
                 }
             }
-            app.manage(AppState { dir: Mutex::new(dir), config });
+            app.manage(AppState { dir: Mutex::new(dir), config, backup_log });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -153,6 +182,10 @@ pub fn run() {
             delete_entry,
             export_all,
             can_pick_folder,
+            can_backup,
+            backup_status,
+            backup_now,
+            restore_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dayfile");

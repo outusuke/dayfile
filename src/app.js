@@ -18,6 +18,7 @@ const MOOD_NAMES = ['Rough', 'Low', 'Okay', 'Good', 'Great'];
 
 const S = {
   canPick: true,
+  canBackup: false, backup: null, backupTimer: null,
   dir: '',
   entries: new Map(),
   date: today(),
@@ -198,6 +199,7 @@ async function doSave(force) {
     if (res) { S.entries.set(date, res); S.cur = { rev: res.rev, extra: res.extra }; }
     else { S.entries.delete(date); S.cur = { rev: null, extra: [] }; }
     S.blocked = false; hideNotice();
+    scheduleBackup();
     $('deleteBtn').classList.toggle('hidden', !res);
     if (!S.dirty) {
       setIndicator(res ? 'Saved' : '');
@@ -521,6 +523,8 @@ function wire() {
   $('exportTxt').onclick = () => exportAll('txt');
   $('exportMd').onclick = () => exportAll('md');
   $('exportJson').onclick = () => exportAll('json');
+  $('restoreBtn').onclick = restoreBackup;
+  document.addEventListener('visibilitychange', () => { if (document.hidden && S.backupTimer) runBackup(); });
 
   $('prevYear').onclick = () => { S.year--; renderYear(); };
   $('nextYear').onclick = () => { S.year++; renderYear(); };
@@ -548,6 +552,47 @@ function savedTheme() {
   try { return localStorage.getItem('dayfile-theme') || 'system'; } catch (_) { return 'system'; }
 }
 
+function scheduleBackup(delay = 20000) {
+  if (!S.canBackup) return;
+  clearTimeout(S.backupTimer);
+  S.backupTimer = setTimeout(runBackup, delay);
+}
+
+async function runBackup() {
+  clearTimeout(S.backupTimer);
+  S.backupTimer = null;
+  // let a pending save land first so the zip has the latest text
+  await flush();
+  try {
+    S.backup = await invoke('backup_now', { day: today() });
+  } catch (e) {
+    toast('Backup failed: ' + msgOf(e), 5000);
+    try { S.backup = await invoke('backup_status'); } catch (_) {}
+  }
+  renderBackup();
+}
+
+function renderBackup() {
+  const p = $('backupStatus'), b = S.backup;
+  if (!S.canBackup || !b) return;
+  p.textContent = b.error ? 'Last backup failed: ' + b.error
+    : b.last ? 'Last backed up ' + new Date(b.last).toLocaleString() : 'No backup yet';
+  p.classList.remove('hidden');
+}
+
+async function restoreBackup() {
+  try {
+    const picked = await T.dialog.open({ multiple: false, filters: [{ name: 'Zip archive', extensions: ['zip'] }] });
+    if (!picked) return;
+    const r = await invoke('restore_backup', await T.fs.readFile(picked));
+    hideNotice();
+    await refreshAll(true);
+    const n = r.restored;
+    toast(`Restored ${n} entr${n === 1 ? 'y' : 'ies'}` + (r.skipped ? `, ${r.skipped} already existed` : ''), 4000);
+    scheduleBackup(2000);
+  } catch (e) { toast('Restore failed: ' + msgOf(e), 4000); }
+}
+
 async function init() {
   wire();
   applyTheme(savedTheme());
@@ -558,6 +603,17 @@ async function init() {
   }
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);
+  try { S.canBackup = await invoke('can_backup'); } catch (_) {}
+  if (S.canBackup) {
+    $('backupNote').classList.remove('hidden');
+    try { S.backup = await invoke('backup_status'); renderBackup(); } catch (_) {}
+    if (S.entries.size === 0) {
+      showNotice('Reinstalled? Restore your entries from a backup zip.', [
+        { label: 'Restore…', onClick: restoreBackup },
+        { label: 'Dismiss', alt: true, onClick: hideNotice },
+      ]);
+    } else scheduleBackup(2000);
+  }
 }
 
 init();
