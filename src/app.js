@@ -70,6 +70,7 @@ const hideNotice = () => $('notice').classList.add('hidden');
 
 function renderBanner(error) {
   $('folderPath').textContent = S.dir || '…';
+  if (document.activeElement !== $('pathInput')) $('pathInput').value = S.dir;
   const b = $('banner');
   b.replaceChildren();
   b.classList.toggle('hidden', !error);
@@ -81,24 +82,34 @@ function renderBanner(error) {
 
 const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+async function applyFolder(path) {
+  try {
+    S.dir = await invoke('set_journal_dir', { path });
+    S.blocked = false; hideNotice();
+    await refreshAll(true);
+    toast('Journal folder changed');
+  } catch (e) {
+    toast(msgOf(e), 5000);
+  }
+}
+
 async function changeFolder() {
   await flush();
   let picked;
   try {
     picked = await T.dialog.open({ directory: true, multiple: false, defaultPath: S.dir || undefined });
   } catch (e) {
-    toast(isMobile() ? "This device keeps entries in the app's own folder" : 'Folder picker failed: ' + msgOf(e));
+    toast('Folder picker failed: ' + msgOf(e));
     return;
   }
-  if (!picked) return;
-  try {
-    S.dir = await invoke('set_journal_dir', { path: picked });
-    S.blocked = false; hideNotice();
-    await refreshAll(true);
-    toast('Journal folder changed');
-  } catch (e) {
-    renderBanner(msgOf(e));
-  }
+  if (picked) await applyFolder(picked);
+}
+
+async function setTypedPath() {
+  const path = $('pathInput').value.trim();
+  if (!path || path === S.dir) return;
+  await flush();
+  await applyFolder(path);
 }
 
 async function fetchEntries() {
@@ -508,6 +519,7 @@ function wire() {
     renderBrowse();
   };
   $('changeFolder').onclick = changeFolder;
+  $('setPath').onclick = setTypedPath;
   document.querySelectorAll('[data-theme-opt]').forEach((b) => {
     b.onclick = () => {
       try { localStorage.setItem('dayfile-theme', b.dataset.themeOpt); } catch (_) {}
@@ -549,6 +561,7 @@ async function init() {
   if (isMobile()) {
     $('changeFolder').classList.add('hidden');
     $('folderNote').classList.remove('hidden');
+    $('pathRow').classList.remove('hidden');
   }
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);

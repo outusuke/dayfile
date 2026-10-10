@@ -18,6 +18,49 @@ impl AppState {
     }
 }
 
+// Android/media/<package> stays reachable from file managers and other apps; Android/data doesn't on Android 11+.
+#[cfg(target_os = "android")]
+fn android_media_journal(docs: &std::path::Path) -> Option<PathBuf> {
+    let (root, rest) = docs.to_str()?.split_once("/Android/data/")?;
+    let package = rest.split('/').next()?;
+    Some(PathBuf::from(format!("{root}/Android/media/{package}/Journal")))
+}
+
+#[cfg(target_os = "android")]
+fn adopt_old_entries(old: &std::path::Path, new: &std::path::Path) {
+    let empty = fs::read_dir(new).map(|mut d| d.next().is_none()).unwrap_or(false);
+    if !empty {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(old) else { return };
+    for e in entries.flatten() {
+        let from = e.path();
+        if from.is_file() && fs::copy(&from, new.join(e.file_name())).is_ok() {
+            let _ = fs::remove_file(from);
+        }
+    }
+}
+
+fn default_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let docs = app.path().document_dir().ok();
+    #[cfg(target_os = "android")]
+    {
+        if let Some(docs) = &docs {
+            if let Some(media) = android_media_journal(docs) {
+                if store::ensure_writable(&media).is_ok() {
+                    adopt_old_entries(&docs.join("Journal"), &media);
+                    return Ok(media);
+                }
+            }
+        }
+    }
+    // app-data fallback is for platforms without a Documents folder
+    Ok(match docs {
+        Some(d) => d.join("Journal"),
+        None => app.path().app_data_dir()?.join("Journal"),
+    })
+}
+
 #[tauri::command]
 async fn journal_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.dir().to_string_lossy().into_owned())
@@ -73,10 +116,10 @@ pub fn run() {
             fs::create_dir_all(&config_dir)?;
             let config = config_dir.join("config.json");
 
-            // App-data fallback is for Android, which has no Documents folder.
-            let dir = store::load_dir(&config)
-                .or_else(|| app.path().document_dir().ok().map(|d| d.join("Journal")))
-                .unwrap_or(app.path().app_data_dir()?.join("Journal"));
+            let dir = match store::load_dir(&config) {
+                Some(d) => d,
+                None => default_dir(app)?,
+            };
             if let Err(err) = fs::create_dir_all(&dir) {
                 eprintln!("[dayfile] couldn't create {}: {err}", dir.display());
             }

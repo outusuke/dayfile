@@ -115,7 +115,11 @@
               <span class="folder-path" id="folderPath"></span>
               <button class="btn btn-secondary" id="changeFolder">Change</button>
             </div>
-            <p class="set-note hidden" id="folderNote">Android keeps entries in the app's own folder. Use Export to back them up.</p>
+            <p class="set-note hidden" id="folderNote">Android has no folder picker for apps. Type a path instead; Android only lets Dayfile write inside its own folders, such as Android/media/dev.dayfile.app/. Existing entries aren't moved.</p>
+            <div class="set-row hidden" id="pathRow">
+              <input type="text" id="pathInput" class="tags-input" aria-label="Folder path" autocapitalize="off" autocomplete="off" spellcheck="false">
+              <button class="btn btn-secondary" id="setPath">Set</button>
+            </div>
           </div>
           <div class="set-group">
             <div class="set-label">Appearance</div>
