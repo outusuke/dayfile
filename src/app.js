@@ -17,6 +17,7 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && ymd(parse(s)) === s;
 const MOOD_NAMES = ['Rough', 'Low', 'Okay', 'Good', 'Great'];
 
 const S = {
+  canPick: true,
   dir: '',
   entries: new Map(),
   date: today(),
@@ -70,17 +71,16 @@ const hideNotice = () => $('notice').classList.add('hidden');
 
 function renderBanner(error) {
   $('folderPath').textContent = S.dir || '…';
-  if (document.activeElement !== $('pathInput')) $('pathInput').value = S.dir;
   const b = $('banner');
   b.replaceChildren();
   b.classList.toggle('hidden', !error);
   if (!error) return;
+  b.append(el('h3', null, 'Folder problem'), el('p', null, error));
+  if (!S.canPick) return;
   const btn = el('button', null, 'Choose folder');
   btn.onclick = changeFolder;
-  b.append(el('h3', null, 'Folder problem'), el('p', null, error), btn);
+  b.append(btn);
 }
-
-const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 async function applyFolder(path) {
   try {
@@ -103,13 +103,6 @@ async function changeFolder() {
     return;
   }
   if (picked) await applyFolder(picked);
-}
-
-async function setTypedPath() {
-  const path = $('pathInput').value.trim();
-  if (!path || path === S.dir) return;
-  await flush();
-  await applyFolder(path);
 }
 
 async function fetchEntries() {
@@ -411,7 +404,7 @@ async function exportAll(format) {
   try {
     const path = await T.dialog.save({
       defaultPath: `dayfile-export.${format}`,
-      filters: [{ name: format === 'md' ? 'Markdown' : 'JSON', extensions: [format] }],
+      filters: [{ name: { txt: 'Text', md: 'Markdown', json: 'JSON' }[format], extensions: [format] }],
     });
     if (!path) return;
     const n = await invoke('export_all', { path, format });
@@ -519,13 +512,13 @@ function wire() {
     renderBrowse();
   };
   $('changeFolder').onclick = changeFolder;
-  $('setPath').onclick = setTypedPath;
   document.querySelectorAll('[data-theme-opt]').forEach((b) => {
     b.onclick = () => {
       try { localStorage.setItem('dayfile-theme', b.dataset.themeOpt); } catch (_) {}
       applyTheme(b.dataset.themeOpt);
     };
   });
+  $('exportTxt').onclick = () => exportAll('txt');
   $('exportMd').onclick = () => exportAll('md');
   $('exportJson').onclick = () => exportAll('json');
 
@@ -558,10 +551,10 @@ function savedTheme() {
 async function init() {
   wire();
   applyTheme(savedTheme());
-  if (isMobile()) {
+  try { S.canPick = await invoke('can_pick_folder'); } catch (_) {}
+  if (!S.canPick) {
     $('changeFolder').classList.add('hidden');
     $('folderNote').classList.remove('hidden');
-    $('pathRow').classList.remove('hidden');
   }
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);

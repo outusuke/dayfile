@@ -71,6 +71,11 @@ fn default_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> 
 }
 
 #[tauri::command]
+fn can_pick_folder() -> bool {
+    !cfg!(any(target_os = "android", target_os = "ios"))
+}
+
+#[tauri::command]
 async fn journal_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.dir().to_string_lossy().into_owned())
 }
@@ -125,12 +130,16 @@ pub fn run() {
             fs::create_dir_all(&config_dir)?;
             let config = config_dir.join("config.json");
 
-            let dir = match store::load_dir(&config) {
-                Some(d) => d,
+            let saved = store::load_dir(&config);
+            let dir = match &saved {
+                Some(d) => d.clone(),
                 None => default_dir(app)?,
             };
-            if let Err(err) = fs::create_dir_all(&dir) {
-                eprintln!("[dayfile] couldn't create {}: {err}", dir.display());
+            // a chosen folder is never created or replaced here, so a missing drive shows an error instead
+            if saved.is_none() {
+                if let Err(err) = fs::create_dir_all(&dir) {
+                    eprintln!("[dayfile] couldn't create {}: {err}", dir.display());
+                }
             }
             app.manage(AppState { dir: Mutex::new(dir), config });
             Ok(())
@@ -143,6 +152,7 @@ pub fn run() {
             write_entry,
             delete_entry,
             export_all,
+            can_pick_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dayfile");
