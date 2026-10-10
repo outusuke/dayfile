@@ -12,11 +12,9 @@ const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return ymd(d); };
 const today = () => ymd(new Date());
-const longDate = (s) => parse(s).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && ymd(parse(s)) === s;
 
-const MOODS = ['😞', '🙁', '😐', '🙂', '😄'];
-const MOOD_NAMES = ['Awful', 'Bad', 'Okay', 'Good', 'Great'];
+const MOOD_NAMES = ['Rough', 'Low', 'Okay', 'Good', 'Great'];
 
 const S = {
   dir: '',
@@ -71,20 +69,14 @@ function showNotice(text, buttons) {
 const hideNotice = () => $('notice').classList.add('hidden');
 
 function renderBanner(error) {
+  $('folderPath').textContent = S.dir || '…';
   const b = $('banner');
-  b.className = 'setup-banner' + (error ? ' error' : '');
   b.replaceChildren();
-  const h = el('h3', null, error ? '⚠️ Folder problem' : '✓ Connected');
-  const p = el('p');
-  if (error) {
-    p.append(document.createTextNode(error + ' '));
-  } else {
-    p.append(document.createTextNode('Saving to: '));
-  }
-  p.append(el('span', 'folder-path', S.dir || '…'));
-  const btn = el('button', null, error ? 'Choose folder' : 'Change folder');
+  b.classList.toggle('hidden', !error);
+  if (!error) return;
+  const btn = el('button', null, 'Choose folder');
   btn.onclick = changeFolder;
-  b.append(h, p, btn);
+  b.append(el('h3', null, 'Folder problem'), el('p', null, error), btn);
 }
 
 async function changeFolder() {
@@ -143,7 +135,12 @@ async function loadDay(date, skipFlush) {
   S.calMonth = date.slice(0, 7);
   if (entry) S.entries.set(date, entry); else S.entries.delete(date);
   $('dateInput').value = date;
-  $('dateLabel').textContent = longDate(date);
+  const d = parse(date);
+  $('dayName').textContent = d.toLocaleDateString('en-US', { weekday: 'long' });
+  $('dayTitle').replaceChildren(
+    document.createTextNode(d.toLocaleDateString('en-US', { day: 'numeric', month: 'long' }) + ' '),
+    el('span', 'year', String(d.getFullYear())),
+  );
   hideNotice();
   fillEditor(entry);
   $('deleteBtn').classList.toggle('hidden', !entry);
@@ -191,8 +188,8 @@ async function doSave(force) {
     S.blocked = false; hideNotice();
     $('deleteBtn').classList.toggle('hidden', !res);
     if (!S.dirty) {
-      setIndicator(res ? '✓ Saved' : '');
-      setTimeout(() => { if ($('saveIndicator').textContent === '✓ Saved') setIndicator(''); }, 2000);
+      setIndicator(res ? 'Saved' : '');
+      setTimeout(() => { if ($('saveIndicator').textContent === 'Saved') setIndicator(''); }, 2000);
     }
     renderStats(); renderCalendar(); renderActive();
     return true;
@@ -270,13 +267,33 @@ function renderStats() {
   const { cur, longest } = streaks();
   let words = 0;
   for (const e of S.entries.values()) words += e.words;
+  $('streakChip').textContent = cur ? `${cur}-day streak` : 'Start a streak';
   $('statEntries').textContent = S.entries.size;
   $('statStreak').textContent = cur;
   $('statLongest').textContent = longest;
   $('statWords').textContent = words.toLocaleString('en-US');
 }
 
+function renderWeek() {
+  const root = $('weekStrip');
+  root.replaceChildren();
+  const monday = addDays(S.date, -((parse(S.date).getDay() + 6) % 7));
+  const t = today();
+  'MTWTFSS'.split('').forEach((letter, i) => {
+    const date = addDays(monday, i);
+    const b = el('button', 'week-day');
+    b.setAttribute('aria-label', parse(date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }));
+    b.append(el('span', 'wd-l', letter), el('span', 'wd-n', String(parse(date).getDate())), el('span', 'wd-dot'));
+    if (S.entries.has(date)) b.classList.add('has');
+    if (date === S.date) b.classList.add('sel');
+    if (date === t) b.classList.add('today');
+    b.onclick = () => loadDay(date);
+    root.append(b);
+  });
+}
+
 function renderCalendar() {
+  renderWeek();
   const [y, m] = (S.calMonth || S.date.slice(0, 7)).split('-').map(Number);
   const root = $('calendar');
   root.replaceChildren();
@@ -346,23 +363,26 @@ function renderBrowse() {
     root.append(el('div', 'empty', S.entries.size ? 'No entries match.' : 'No entries yet — write your first one!'));
     return;
   }
+  let month = '';
   for (const e of list) {
-    const card = el('div', 'file-item');
-    const top = el('div', 'file-top');
-    top.append(el('div', 'file-name', `${e.date}.${e.ext}`));
-    const badges = el('div', 'file-badges');
-    if (e.mood) { const m = el('span', null, MOODS[e.mood - 1]); m.title = MOOD_NAMES[e.mood - 1]; badges.append(m); }
-    if (e.starred) badges.append(el('span', null, '★'));
-    top.append(badges);
-    card.append(top, el('div', 'file-date', longDate(e.date)));
+    const key = e.date.slice(0, 7);
+    if (key !== month) {
+      month = key;
+      root.append(el('div', 'month-head', parse(e.date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })));
+    }
+    const card = el('button', 'file-item');
+    const day = el('div', 'row-day');
+    day.append(el('div', 'row-num', e.date.slice(8)), el('div', 'row-wd', parse(e.date).toLocaleDateString('en-US', { weekday: 'short' })));
+    const body = el('div', 'row-body');
     const prev = el('div', 'file-preview');
     prev.append(highlight(snippet(e.body, S.filter.q), S.filter.q));
-    card.append(prev);
-    if (e.tags.length) {
-      const row = el('div', 'tag-row');
-      e.tags.forEach((t) => row.append(el('span', 'tag', '#' + t)));
-      card.append(row);
-    }
+    const bits = [];
+    if (e.mood) bits.push(MOOD_NAMES[e.mood - 1]);
+    if (e.starred) bits.push('Starred');
+    const meta = el('div', 'row-meta', bits.join(' · '));
+    e.tags.forEach((t) => meta.append(el('span', 'tag', '#' + t)));
+    body.append(prev, meta);
+    card.append(day, body);
     card.onclick = () => { switchTab('write'); loadDay(e.date); };
     root.append(card);
   }
@@ -387,46 +407,37 @@ function renderYear() {
   $('heatMood').classList.toggle('active', S.heat === 'mood');
   const root = $('heatmap');
   root.replaceChildren();
-  const jan1 = new Date(y, 0, 1), dec31 = new Date(y, 11, 31);
-  const cursor = new Date(y, 0, 1 - ((jan1.getDay() + 6) % 7));
   const t = today();
-  let count = 0, todayWeek = null;
-  while (cursor <= dec31) {
-    const week = el('div', 'heat-week');
-    const label = el('div', 'heat-label');
-    week.append(label);
-    for (let i = 0; i < 7; i++) {
-      const date = ymd(cursor);
+  let count = 0;
+  for (let m = 0; m < 12; m++) {
+    const box = el('div', 'heat-month');
+    box.append(el('div', 'heat-label', new Date(y, m, 1).toLocaleDateString('en-US', { month: 'short' })));
+    const grid = el('div', 'heat-grid');
+    for (let i = (new Date(y, m, 1).getDay() + 6) % 7; i > 0; i--) grid.append(el('span'));
+    for (let d = 1, n = new Date(y, m + 1, 0).getDate(); d <= n; d++) {
+      const date = `${y}-${pad(m + 1)}-${pad(d)}`;
       const cell = el('button', 'heat-cell');
-      if (cursor.getFullYear() !== y) {
-        cell.classList.add('off');
-      } else {
-        if (cursor.getDate() === 1) label.textContent = cursor.toLocaleDateString('en-US', { month: 'short' });
-        if (date === t) todayWeek = week;
-        const e = S.entries.get(date);
-        if (e) {
-          count++;
-          if (S.heat === 'mood') cell.classList.add('m' + (e.mood || 0));
-          else cell.classList.add('l' + (e.words >= 300 ? 4 : e.words >= 150 ? 3 : e.words >= 50 ? 2 : 1));
-          if (e.starred) cell.classList.add('star');
-          cell.title = `${date} · ${e.words} words` + (e.mood ? ` · ${MOOD_NAMES[e.mood - 1]}` : '');
-        } else {
-          cell.title = date;
-        }
-        if (date > t) cell.classList.add('future');
-        cell.onclick = () => { switchTab('write'); loadDay(date); };
+      const e = S.entries.get(date);
+      cell.title = date;
+      if (e) {
+        count++;
+        if (S.heat === 'mood') cell.classList.add('m' + (e.mood || 0));
+        else cell.classList.add('l' + (e.words >= 300 ? 4 : e.words >= 150 ? 3 : e.words >= 50 ? 2 : 1));
+        if (e.starred) cell.classList.add('star');
+        cell.title = `${date} · ${e.words} words` + (e.mood ? ` · ${MOOD_NAMES[e.mood - 1]}` : '');
       }
-      week.append(cell);
-      cursor.setDate(cursor.getDate() + 1);
+      if (date > t) cell.classList.add('future');
+      if (date === t) cell.classList.add('today');
+      cell.onclick = () => { switchTab('write'); loadDay(date); };
+      grid.append(cell);
     }
-    root.append(week);
+    box.append(grid);
+    root.append(box);
   }
-  const wrap = root.parentElement;
-  wrap.scrollLeft = todayWeek ? Math.max(0, todayWeek.offsetLeft - wrap.clientWidth / 2) : 0;
   const lg = $('heatLegend');
   lg.replaceChildren();
   const cls = S.heat === 'mood' ? ['m1', 'm2', 'm3', 'm4', 'm5'] : ['', 'l1', 'l2', 'l3', 'l4'];
-  lg.append(document.createTextNode(S.heat === 'mood' ? 'Awful' : 'Less'));
+  lg.append(document.createTextNode(S.heat === 'mood' ? 'Rough' : 'Less'));
   cls.forEach((c) => lg.append(el('span', 'heat-cell ' + c)));
   lg.append(document.createTextNode(S.heat === 'mood' ? 'Great' : 'More'));
   const days = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 366 : 365;
@@ -440,9 +451,8 @@ function renderActive() {
 async function switchTab(tab) {
   if (tab !== 'write') await flush();
   S.tab = tab;
-  document.body.dataset.tab = tab;
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  for (const t of ['write', 'browse', 'year']) $('tab-' + t).classList.toggle('hidden', t !== tab);
+  for (const t of ['write', 'browse', 'year', 'settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
   renderActive();
 }
 
@@ -460,9 +470,9 @@ async function onFocus() {
 }
 
 function wire() {
-  MOODS.forEach((emoji, i) => {
-    const b = el('button', 'mood-btn', emoji);
-    b.dataset.mood = i + 1; b.title = MOOD_NAMES[i];
+  MOOD_NAMES.forEach((name, i) => {
+    const b = el('button', 'mood-btn', name);
+    b.dataset.mood = i + 1;
     b.setAttribute('aria-pressed', 'false');
     b.onclick = () => { S.mood = S.mood === i + 1 ? null : i + 1; renderMeta(); markDirty(); };
     $('moods').append(b);
@@ -489,6 +499,13 @@ function wire() {
     e.currentTarget.setAttribute('aria-pressed', String(S.filter.starred));
     renderBrowse();
   };
+  $('changeFolder').onclick = changeFolder;
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => {
+    b.onclick = () => {
+      try { localStorage.setItem('dayfile-theme', b.dataset.themeOpt); } catch (_) {}
+      applyTheme(b.dataset.themeOpt);
+    };
+  });
   $('exportMd').onclick = () => exportAll('md');
   $('exportJson').onclick = () => exportAll('json');
 
@@ -509,8 +526,18 @@ function wire() {
   window.addEventListener('pagehide', () => { if (S.dirty && !S.blocked) save(); });
 }
 
+function applyTheme(pref) {
+  if (pref === 'light' || pref === 'dark') document.documentElement.dataset.theme = pref;
+  else delete document.documentElement.dataset.theme;
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.themeOpt === pref)));
+}
+function savedTheme() {
+  try { return localStorage.getItem('dayfile-theme') || 'system'; } catch (_) { return 'system'; }
+}
+
 async function init() {
   wire();
+  applyTheme(savedTheme());
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);
 }

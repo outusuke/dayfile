@@ -3,72 +3,63 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>Dayfile</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body data-tab="write">
+<body>
   <div class="container">
     <div class="card">
       <header class="header">
         <div class="header-content">
           <div class="header-title">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
-            <div>
-              <h1>Dayfile</h1>
-              <div class="header-subtitle">Auto-saves • Plain Markdown • ISO 8601</div>
-            </div>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            <h1>Dayfile</h1>
           </div>
           <nav class="tab-buttons" role="tablist">
-            <button class="tab-btn active" data-tab="write" role="tab">Write</button>
-            <button class="tab-btn" data-tab="browse" role="tab">Browse</button>
-            <button class="tab-btn" data-tab="year" role="tab">Year</button>
+            <button class="tab-btn active" data-tab="write" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/></svg><span>Today</span></button>
+            <button class="tab-btn" data-tab="browse" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg><span>Journal</span></button>
+            <button class="tab-btn" data-tab="year" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg><span>Year</span></button>
+            <button class="tab-btn" data-tab="settings" role="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/></svg><span>Settings</span></button>
           </nav>
         </div>
       </header>
 
       <div class="content">
-        <div id="banner" class="setup-banner"></div>
+        <div id="banner" class="setup-banner hidden"></div>
         <div id="notice" class="notice hidden"></div>
 
         <section id="tab-write">
           <div class="write-grid">
             <div class="write-main">
-              <div class="date-nav">
-                <div class="date-selector">
-                  <button class="nav-btn" id="prevDay" title="Previous day (Alt+←)">◀</button>
-                  <div>
-                    <input type="date" id="dateInput" class="date-input">
-                    <div id="dateLabel" class="date-label"></div>
-                  </div>
-                  <button class="nav-btn" id="nextDay" title="Next day (Alt+→)">▶</button>
+              <div class="page-head">
+                <div>
+                  <div class="eyebrow" id="dayName"></div>
+                  <h1 class="page-title" id="dayTitle"></h1>
                 </div>
-                <div class="action-buttons">
-                  <button class="btn btn-secondary" id="todayBtn">Today</button>
-                  <button class="btn btn-secondary" id="starBtn" title="Star this entry" aria-pressed="false">☆</button>
-                  <button class="btn btn-danger hidden" id="deleteBtn">🗑️ Delete</button>
+                <div class="head-actions">
+                  <span class="streak-chip" id="streakChip"></span>
+                  <button class="icon-btn" id="starBtn" aria-label="Star this entry" aria-pressed="false">☆</button>
                 </div>
               </div>
-
-              <div class="stats">
-                <div class="stat-item"><div class="stat-value" id="statEntries">0</div><div class="stat-label">Total Entries</div></div>
-                <div class="stat-item"><div class="stat-value" id="statStreak">0</div><div class="stat-label">Day Streak</div></div>
-                <div class="stat-item"><div class="stat-value" id="statLongest">0</div><div class="stat-label">Longest Streak</div></div>
-                <div class="stat-item"><div class="stat-value" id="statWords">0</div><div class="stat-label">Words Written</div></div>
+              <div class="week-strip" id="weekStrip"></div>
+              <div class="day-tools">
+                <button class="hidden" id="prevDay" aria-label="Previous day"></button>
+                <button class="hidden" id="nextDay" aria-label="Next day"></button>
+                <input type="date" id="dateInput" class="date-input" aria-label="Jump to date">
+                <button class="btn btn-secondary" id="todayBtn">Today</button>
+                <button class="btn btn-danger hidden" id="deleteBtn">Delete</button>
               </div>
-
-              <div class="editor-area">
-                <div class="meta-row">
-                  <div class="moods" id="moods" role="group" aria-label="Mood"></div>
-                  <input type="text" id="tagsInput" class="tags-input" placeholder="tags, separated by commas" autocomplete="off" spellcheck="false">
-                </div>
-                <div class="editor-status">
-                  <span id="wordCount" class="word-count"></span>
-                  <span id="saveIndicator" class="save-indicator"></span>
-                </div>
-                <textarea id="entryText" class="textarea" placeholder="What's on your mind today?"></textarea>
+              <textarea id="entryText" class="textarea" placeholder="What's on your mind today?"></textarea>
+              <div class="meta-row">
+                <input type="text" id="tagsInput" class="tags-input" placeholder="Tags, separated by commas" autocomplete="off" spellcheck="false">
+                <div class="moods" id="moods" role="group" aria-label="Mood"></div>
+              </div>
+              <div class="editor-status">
+                <span id="wordCount" class="word-count"></span>
+                <span id="saveIndicator" class="save-indicator"></span>
               </div>
             </div>
-
             <aside class="write-side">
               <div class="calendar" id="calendar"></div>
             </aside>
@@ -76,35 +67,70 @@
         </section>
 
         <section id="tab-browse" class="hidden">
-          <div class="browse-tools">
-            <input type="search" id="searchInput" class="search-input" placeholder="Search entries, tags or dates…" autocomplete="off">
-            <select id="tagFilter" class="select"><option value="">All tags</option></select>
-            <button class="btn btn-secondary" id="starFilter" aria-pressed="false">★ Starred</button>
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Journal</h1>
+              <div class="sub" id="browseCount"></div>
+            </div>
           </div>
-          <div class="browse-meta">
-            <span id="browseCount"></span>
-            <span class="spacer"></span>
-            <button class="btn btn-secondary" id="exportMd">Export Markdown</button>
-            <button class="btn btn-secondary" id="exportJson">Export JSON</button>
+          <div class="browse-tools">
+            <input type="search" id="searchInput" class="search-input" placeholder="Search entries, tags, dates" autocomplete="off">
+            <select id="tagFilter" class="select" aria-label="Filter by tag"><option value="">All tags</option></select>
+            <button class="btn btn-secondary" id="starFilter" aria-pressed="false">Starred</button>
           </div>
           <div id="filesList" class="file-list"></div>
         </section>
 
         <section id="tab-year" class="hidden">
-          <div class="date-nav">
-            <div class="date-selector">
-              <button class="nav-btn" id="prevYear">◀</button>
-              <div class="year-title" id="yearTitle"></div>
-              <button class="nav-btn" id="nextYear">▶</button>
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">Year in review</div>
+              <h1 class="page-title" id="yearTitle"></h1>
             </div>
-            <div class="action-buttons">
-              <button class="btn btn-secondary active" id="heatWords">Words</button>
-              <button class="btn btn-secondary" id="heatMood">Mood</button>
+            <div class="head-actions">
+              <button class="icon-btn" id="prevYear" aria-label="Previous year">‹</button>
+              <button class="icon-btn" id="nextYear" aria-label="Next year">›</button>
             </div>
           </div>
-          <div class="heat-wrap"><div id="heatmap" class="heatmap"></div></div>
+          <div class="seg">
+            <button class="active" id="heatWords">Words</button>
+            <button id="heatMood">Mood</button>
+          </div>
+          <div id="heatmap" class="heatmap"></div>
           <div class="heat-legend" id="heatLegend"></div>
           <div class="heat-summary" id="heatSummary"></div>
+          <div class="stats">
+            <div class="stat-item"><div class="stat-value" id="statEntries">0</div><div class="stat-label">Entries</div></div>
+            <div class="stat-item"><div class="stat-value" id="statStreak">0</div><div class="stat-label">Day streak</div></div>
+            <div class="stat-item"><div class="stat-value" id="statLongest">0</div><div class="stat-label">Longest streak</div></div>
+            <div class="stat-item"><div class="stat-value" id="statWords">0</div><div class="stat-label">Words</div></div>
+          </div>
+        </section>
+
+        <section id="tab-settings" class="hidden">
+          <div class="page-head"><h1 class="page-title">Settings</h1></div>
+          <div class="set-group">
+            <div class="set-label">Journal folder</div>
+            <div class="set-row">
+              <span class="folder-path" id="folderPath"></span>
+              <button class="btn btn-secondary" id="changeFolder">Change</button>
+            </div>
+          </div>
+          <div class="set-group">
+            <div class="set-label">Appearance</div>
+            <div class="seg" id="themeSeg">
+              <button data-theme-opt="system" aria-pressed="true">System</button>
+              <button data-theme-opt="light" aria-pressed="false">Light</button>
+              <button data-theme-opt="dark" aria-pressed="false">Dark</button>
+            </div>
+          </div>
+          <div class="set-group">
+            <div class="set-label">Export</div>
+            <div class="set-row">
+              <button class="btn btn-secondary" id="exportMd">Markdown</button>
+              <button class="btn btn-secondary" id="exportJson">JSON</button>
+            </div>
+          </div>
         </section>
       </div>
     </div>
