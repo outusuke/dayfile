@@ -104,6 +104,10 @@ jobs:
             echo "$KEYSTORE_B64" | base64 -d > release.jks
             PASS="$KEYSTORE_PASSWORD"; ALIAS="$KEY_ALIAS"
           else
+            if [ "$GITHUB_EVENT_NAME" = release ]; then
+              echo "::error::Releases must be signed with the ANDROID_KEYSTORE_* secrets"
+              exit 1
+            fi
             PASS=android-test-key; ALIAS=test
             keytool -genkeypair -keystore release.jks -storepass "$PASS" -keypass "$PASS" -alias "$ALIAS" \
               -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Dayfile test"
@@ -111,7 +115,7 @@ jobs:
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
           "$APKSIGNER" sign --ks release.jks --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --ks-key-alias "$ALIAS" \
             --out dayfile-arm64.apk "$UNSIGNED"
-          "$APKSIGNER" verify dayfile-arm64.apk
+          "$APKSIGNER" verify --print-certs dayfile-arm64.apk | grep "SHA-256 digest"
           rm -f release.jks
 
       - name: Check the native library made it into the APK
