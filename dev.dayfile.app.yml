@@ -17,8 +17,6 @@ finish-args:
   - --socket=fallback-x11
   - --share=ipc
   - --device=dri
-  # Journal folder is user-chosen and remembered across runs, so a portal-only grant would break on restart.
-  - --filesystem=home
 
 modules:
   - name: dayfile
@@ -35,7 +33,6 @@ modules:
           /app/share/applications/dev.dayfile.app.desktop
       - install -Dm644 dev.dayfile.app.metainfo.xml
           /app/share/metainfo/dev.dayfile.app.metainfo.xml
-      - rm -rf src-tauri/target cargo-home
     sources:
       - type: dir
         path: .

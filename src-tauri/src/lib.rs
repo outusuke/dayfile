@@ -54,6 +54,15 @@ fn default_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> 
             }
         }
     }
+    // inside Flatpak this resolves to ~/.var/app/<id>/data, which needs no extra permission
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("FLATPAK_ID").is_some() {
+            if let Ok(data) = app.path().data_dir() {
+                return Ok(data.join("Journal"));
+            }
+        }
+    }
     // app-data fallback is for platforms without a Documents folder
     Ok(match docs {
         Some(d) => d.join("Journal"),
