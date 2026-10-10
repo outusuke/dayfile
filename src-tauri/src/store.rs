@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -275,33 +276,45 @@ pub fn delete(dir: &Path, date: &str) -> Result<(), String> {
 }
 
 pub fn export(dir: &Path, path: &Path, format: &str) -> Result<usize, String> {
+    if !matches!(format, "txt" | "md" | "json") {
+        return Err(format!("unknown export format: {format}"));
+    }
     let entries = list(dir)?;
-    let text = match format {
-        "json" => serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?,
-        "md" => {
-            let mut out = String::from("# Dayfile\n\n");
-            for e in entries.iter().rev() {
-                out.push_str(&format!("## {}", e.date));
-                if e.starred {
-                    out.push_str(" ★");
-                }
-                if let Some(m) = e.mood {
-                    out.push_str(&format!(" · mood {m}/5"));
-                }
-                if !e.tags.is_empty() {
-                    let tags: Vec<String> = e.tags.iter().map(|t| format!("#{t}")).collect();
-                    out.push_str(&format!(" · {}", tags.join(" ")));
-                }
-                out.push_str("\n\n");
-                out.push_str(e.body.trim_end());
-                out.push_str("\n\n---\n\n");
-            }
-            out
-        }
-        other => return Err(format!("unknown export format: {other}")),
-    };
-    fs::write(path, text).map_err(|e| format!("couldn't write the export: {e}"))?;
+    let file = fs::File::create(path).map_err(|e| format!("couldn't write the export: {e}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for e in &entries {
+        let text = match format {
+            "json" => serde_json::to_string_pretty(e).map_err(|err| err.to_string())?,
+            "md" => entry_markdown(e),
+            _ => compose(
+                &Meta { mood: e.mood, tags: e.tags.clone(), starred: e.starred, extra: e.extra.clone() },
+                &e.body,
+            ),
+        };
+        zip.start_file(format!("{}.{format}", e.date), opts).map_err(|e| format!("couldn't write the export: {e}"))?;
+        zip.write_all(text.as_bytes()).map_err(|e| format!("couldn't write the export: {e}"))?;
+    }
+    zip.finish().map_err(|e| format!("couldn't write the export: {e}"))?;
     Ok(entries.len())
+}
+
+fn entry_markdown(e: &Entry) -> String {
+    let mut out = format!("## {}", e.date);
+    if e.starred {
+        out.push_str(" ★");
+    }
+    if let Some(m) = e.mood {
+        out.push_str(&format!(" · mood {m}/5"));
+    }
+    if !e.tags.is_empty() {
+        let tags: Vec<String> = e.tags.iter().map(|t| format!("#{t}")).collect();
+        out.push_str(&format!(" · {}", tags.join(" ")));
+    }
+    out.push_str("\n\n");
+    out.push_str(e.body.trim_end());
+    out.push('\n');
+    out
 }
 
 pub fn ensure_writable(dir: &Path) -> Result<(), String> {

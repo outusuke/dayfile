@@ -403,8 +403,8 @@ function renderBrowse() {
 async function exportAll(format) {
   try {
     const path = await T.dialog.save({
-      defaultPath: `dayfile-export.${format}`,
-      filters: [{ name: { txt: 'Text', md: 'Markdown', json: 'JSON' }[format], extensions: [format] }],
+      defaultPath: `dayfile-export-${format}.zip`,
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }],
     });
     if (!path) return;
     const n = await invoke('export_all', { path, format });
