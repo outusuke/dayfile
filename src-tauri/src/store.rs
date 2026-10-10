@@ -1,19 +1,4 @@
-//! File-backed journal storage.
-//!
-//! One file per day, named `YYYY-MM-DD.md` (older journals with `YYYY-MM-DD.txt` are read
-//! and kept as `.txt`). Mood, tags and the star live in an optional front-matter block:
-//!
-//! ```text
-//! ---
-//! mood: 4
-//! tags: work, family
-//! starred: true
-//! ---
-//! The entry text...
-//! ```
-//!
-//! A day with no metadata is written as plain text, so files stay readable anywhere.
-//! Front-matter lines this app doesn't know are kept in `extra` and written back untouched.
+//! One plain-text file per day (YYYY-MM-DD.txt, older .md files still work) with optional front matter for mood, tags and star.
 
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -48,14 +33,13 @@ pub struct Entry {
     pub starred: bool,
     pub extra: Vec<String>,
     pub ext: String,
-    /// Hash of the raw file. A string because a u64 doesn't survive a round trip through JS.
+    // string: a u64 loses precision in JS
     pub rev: String,
     pub modified: u64,
     pub words: usize,
 }
 
-/// `YYYY-MM-DD`, ASCII only, and a day that exists on the calendar. This is also what keeps a
-/// date from being used as a path.
+// strict on purpose: the date becomes a file name
 pub fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
@@ -129,8 +113,7 @@ pub fn split_front(text: &str) -> (Meta, String) {
 
 pub fn compose(meta: &Meta, body: &str) -> String {
     if meta.is_empty() {
-        // A body that opens with a `---` line would be re-read as front matter. An empty block
-        // in front keeps it literal.
+        // a leading `---` would be re-read as front matter
         if body.lines().next().is_some_and(|l| l.trim_end() == "---") {
             return format!("---\n---\n{body}");
         }
@@ -165,7 +148,7 @@ pub fn compose(meta: &Meta, body: &str) -> String {
 }
 
 fn find(dir: &Path, date: &str) -> Option<(PathBuf, String)> {
-    for ext in ["md", "txt"] {
+    for ext in ["txt", "md"] {
         let p = dir.join(format!("{date}.{ext}"));
         if p.is_file() {
             return Some((p, ext.to_string()));
@@ -211,8 +194,8 @@ pub fn list(dir: &Path) -> Result<Vec<Entry>, String> {
         if !valid_date(stem) || !(ext == "md" || ext == "txt") {
             continue;
         }
-        // if both exist for a day, the .md one wins
-        let keep_old = matches!(found.get(stem), Some((_, old)) if old.as_str() == "md");
+        // .txt wins over .md
+        let keep_old = matches!(found.get(stem), Some((_, old)) if old.as_str() == "txt");
         if !keep_old {
             found.insert(stem.to_string(), (path.clone(), ext.to_string()));
         }
@@ -233,10 +216,7 @@ pub fn read(dir: &Path, date: &str) -> Result<Option<Entry>, String> {
     }
 }
 
-/// `expected_rev` is the revision the editor last saw (`None` = the day had no file). If the file
-/// on disk has changed since, e.g. through a sync client, this fails with "conflict" instead of
-/// overwriting, unless `force` is set. A file that isn't valid UTF-8 fails with "not-utf8" for the
-/// same reason. A day with no text and no metadata deletes its file.
+/// Fails with "conflict" or "not-utf8" unless `force`; an empty day deletes its file.
 pub fn write(
     dir: &Path,
     date: &str,
@@ -258,8 +238,7 @@ pub fn write(
         if raw.as_deref().map(rev_of).as_deref() != expected_rev {
             return Err("conflict".into());
         }
-        // Reading replaces invalid bytes (an old Latin-1 .txt, say), so saving would destroy the
-        // originals. Make the caller opt in with `force`.
+        // reads are lossy, so saving would destroy the original bytes
         if raw.as_deref().is_some_and(|r| std::str::from_utf8(r).is_err()) {
             return Err("not-utf8".into());
         }
@@ -272,7 +251,7 @@ pub fn write(
         return Ok(None);
     }
 
-    let (path, ext) = existing.unwrap_or_else(|| (dir.join(format!("{date}.md")), "md".to_string()));
+    let (path, ext) = existing.unwrap_or_else(|| (dir.join(format!("{date}.txt")), "txt".to_string()));
     let tmp = dir.join(format!(".{date}.tmp"));
     fs::write(&tmp, compose(meta, body)).map_err(|e| format!("couldn't save: {e}"))?;
     fs::rename(&tmp, &path).map_err(|e| {
@@ -404,8 +383,7 @@ mod tests {
         let dir = scratch("conflict");
         let meta = Meta::default();
         let first = write(&dir, "2026-10-09", "one", &meta, None, false).unwrap().unwrap();
-        // someone else edits the file
-        fs::write(dir.join("2026-10-09.md"), "edited elsewhere").unwrap();
+        fs::write(dir.join("2026-10-09.txt"), "edited elsewhere").unwrap();
         let err = write(&dir, "2026-10-09", "two", &meta, Some(&first.rev), false).unwrap_err();
         assert_eq!(err, "conflict");
         let forced = write(&dir, "2026-10-09", "two", &meta, Some(&first.rev), true).unwrap().unwrap();
@@ -456,6 +434,27 @@ mod tests {
         assert_eq!(err, "not-utf8");
         assert_eq!(fs::read(dir.join("2020-05-05.txt")).unwrap(), b"caf\xe9 au lait");
         assert!(write(&dir, "2020-05-05", "x", &Meta::default(), Some(&e.rev), true).is_ok());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn new_entries_are_txt_and_old_md_stays_md() {
+        let dir = scratch("ext");
+        let made = write(&dir, "2026-10-09", "fresh", &Meta::default(), None, false).unwrap().unwrap();
+        assert_eq!(made.ext, "txt");
+        assert!(dir.join("2026-10-09.txt").is_file() && !dir.join("2026-10-09.md").exists());
+
+        fs::write(dir.join("2026-10-08.md"), "legacy").unwrap();
+        let old = read(&dir, "2026-10-08").unwrap().unwrap();
+        let saved = write(&dir, "2026-10-08", "legacy edited", &Meta::default(), Some(&old.rev), false).unwrap().unwrap();
+        assert_eq!(saved.ext, "md");
+        assert!(!dir.join("2026-10-08.txt").exists());
+
+        fs::write(dir.join("2026-10-07.md"), "from md").unwrap();
+        fs::write(dir.join("2026-10-07.txt"), "from txt").unwrap();
+        assert_eq!(read(&dir, "2026-10-07").unwrap().unwrap().body, "from txt");
+        let listed = list(&dir).unwrap();
+        assert_eq!(listed.iter().find(|e| e.date == "2026-10-07").unwrap().body, "from txt");
         let _ = fs::remove_dir_all(dir);
     }
 }

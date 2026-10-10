@@ -155,7 +155,7 @@ async function loadDay(date, skipFlush) {
   if (entry) S.entries.set(date, entry); else S.entries.delete(date);
   $('dateInput').value = date;
   const d = parse(date);
-  $('dayName').textContent = d.toLocaleDateString('en-US', { weekday: 'long' });
+  $('dayName').textContent = `${d.toLocaleDateString('en-US', { weekday: 'long' })} · ${date}`;
   $('dayTitle').replaceChildren(
     document.createTextNode(d.toLocaleDateString('en-US', { day: 'numeric', month: 'long' }) + ' '),
     el('span', 'year', String(d.getFullYear())),
