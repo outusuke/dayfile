@@ -641,6 +641,7 @@ async function init() {
   }
   try { S.dir = await invoke('journal_dir'); } catch (e) { renderBanner(msgOf(e)); }
   await refreshAll(true);
+  try { $('aboutVersion').textContent = 'Dayfile ' + await T.app.getVersion(); } catch (_) {}
   try { S.canBackup = await invoke('can_backup'); } catch (_) {}
   if (S.canBackup) {
     $('backupNote').classList.remove('hidden');

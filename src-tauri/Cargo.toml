@@ -2,7 +2,7 @@
 name = "dayfile"
 version = "1.0.0"
 description = "A private, file-based daily journal"
-license = "MIT"
+license = "GPL-3.0-or-later"
 edition = "2021"
 
 [build-dependencies]
