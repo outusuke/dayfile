@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn empty_journal_has_nothing_to_back_up() {
-        assert!(backup_bytes(&scratch("empty")).unwrap().is_none());
+        assert!(backup_bytes(&scratch("backup-empty")).unwrap().is_none());
     }
 
     fn make_zip(files: &[(&str, &str)]) -> Vec<u8> {
