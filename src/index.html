@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>Dayfile</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="theme-skeuo.css">
 </head>
 <body>
   <div class="container">
@@ -147,6 +148,13 @@
           <div class="set-group">
             <div class="set-label">About</div>
             <div class="set-row"><span id="aboutVersion">Dayfile</span></div>
+            <div class="set-row set-note">
+              <label for="skinSelect">Theme</label>
+              <select id="skinSelect" class="select">
+                <option value="minimal">Minimalist</option>
+                <option value="skeuo">Skeuomorphic</option>
+              </select>
+            </div>
             <p class="set-note">A private, file-based daily journal. Your entries stay in plain text files in your journal folder.</p>
             <p class="set-note">GPL-3.0-or-later · github.com/outusuke/dayfile</p>
           </div>

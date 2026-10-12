@@ -541,6 +541,10 @@ function wire() {
       applyTheme(b.dataset.themeOpt);
     };
   });
+  $('skinSelect').onchange = (e) => {
+    try { localStorage.setItem('dayfile-skin', e.target.value); } catch (_) {}
+    applySkin(e.target.value);
+  };
   $('exportTxt').onclick = () => exportAll('txt');
   $('exportMd').onclick = () => exportAll('md');
   $('exportJson').onclick = () => exportAll('json');
@@ -573,6 +577,15 @@ function applyTheme(pref) {
 }
 function savedTheme() {
   try { return localStorage.getItem('dayfile-theme') || 'system'; } catch (_) { return 'system'; }
+}
+
+function applySkin(skin) {
+  if (skin === 'skeuo') document.documentElement.dataset.skin = skin;
+  else delete document.documentElement.dataset.skin;
+  $('skinSelect').value = skin === 'skeuo' ? skin : 'minimal';
+}
+function savedSkin() {
+  try { return localStorage.getItem('dayfile-skin') || 'minimal'; } catch (_) { return 'minimal'; }
 }
 
 function scheduleBackup(delay = 20000) {
@@ -634,6 +647,7 @@ async function restoreBackup() {
 async function init() {
   wire();
   applyTheme(savedTheme());
+  applySkin(savedSkin());
   try { S.canPick = await invoke('can_pick_folder'); } catch (_) {}
   if (!S.canPick) {
     $('changeFolder').classList.add('hidden');
